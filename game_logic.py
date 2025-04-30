@@ -7,221 +7,264 @@ class Fighter:
         self.health = 100
         self.fatigue = 0
         self.score = 0
-        self.position = 'neutral'
+        self.position = "neutral"
 
     def apply_fatigue(self, amount):
         self.fatigue = min(100, self.fatigue + amount)
 
-    def recover(self, amount):
+    def recover_fatigue(self, amount):
         self.fatigue = max(0, self.fatigue - amount)
 
-    def is_tired(self):
-        return self.fatigue > 60
+    def apply_damage(self, amount):
+        self.health = max(0, self.health - amount)
 
     def add_score(self, points):
         self.score += points
 
+    def is_tired(self):
+        return self.fatigue >= 60
+
+    def is_submitted(self):
+        return self.health <= 0
+
+class ActionEngine:
+    def __init__(self):
+        self.legal_transitions = {
+            "takedown": ["neutral"],
+            "pull_guard": ["neutral"],
+            "sweep": ["guard", "bottom"],
+            "escape": ["guard", "bottom"],
+            "submit": ["guard", "top", "dominant", "bottom"],
+            "pressure_pass": ["top"],
+            "maintain_position": ["top", "dominant"],
+            "stand_up": ["guard", "bottom"],
+            "hip_escape": ["bottom"],
+            "face_crank": ["dominant"],
+            "feint": ["neutral"],
+            "snap_down": ["neutral"],
+            "knee_slide_pass": ["top"],
+            "shoulder_pressure": ["top", "dominant"],
+            "armbar": ["guard"],
+            "omoplata": ["guard"],
+            "technical_standup": ["bottom"],
+            "rear_naked_choke": ["dominant"],
+            "mount_strikes": ["dominant"]
+        }
+
+    def evaluate(self, actor, opponent, action):
+        if actor.position not in self.legal_transitions.get(action, []):
+            return {
+                "success": False,
+                "result": f"Cannot perform {action} from {actor.position} position.",
+                "fatigue": 0,
+                "position": actor.position
+            }
+
+        iq = actor.stats["grappling_iq"]
+        strength = actor.stats["strength"]
+        fatigue_penalty = actor.fatigue // 3
+        roll = random.randint(-10, 10)
+        success_chance = iq + roll - fatigue_penalty + (opponent.fatigue // 5)
+
+        result = {
+            "success": False,
+            "result": f"{action} failed.",
+            "fatigue": 0,
+            "position": actor.position,
+            "score": 0,
+            "damage": 0
+        }
+
+        if action == "feint":
+            result.update({
+                "success": True,
+                "result": "Feint successful — you confused your opponent!",
+                "fatigue": 3,
+                "score": 0
+            })
+
+        elif action == "snap_down":
+            if success_chance > 55:
+                result.update({
+                    "success": True,
+                    "result": "Snap down successful — front headlock position gained!",
+                    "fatigue": 5,
+                    "score": 2,
+                    "position": "top"
+                })
+
+        elif action == "knee_slide_pass":
+            if success_chance + strength // 5 > 65:
+                result.update({
+                    "success": True,
+                    "result": "Knee slide pass successful — advanced to mount!",
+                    "fatigue": 10,
+                    "score": 3,
+                    "position": "dominant"
+                })
+
+        elif action == "shoulder_pressure":
+            result.update({
+                "success": True,
+                "result": "Applied shoulder pressure — opponent is tiring.",
+                "fatigue": 6,
+                "score": 1
+            })
+
+        elif action == "armbar":
+            if success_chance > 75:
+                result.update({
+                    "success": True,
+                    "result": "Armbar locked in!",
+                    "fatigue": 14,
+                    "score": 4,
+                    "damage": 100
+                })
+
+        elif action == "omoplata":
+            if success_chance > 70:
+                result.update({
+                    "success": True,
+                    "result": "Omoplata swept and pressured opponent!",
+                    "fatigue": 12,
+                    "score": 3,
+                    "position": "top"
+                })
+
+        elif action == "technical_standup":
+            result.update({
+                "success": True,
+                "result": "Technical stand-up successful — returned to neutral.",
+                "fatigue": 8,
+                "position": "neutral"
+            })
+
+        elif action == "rear_naked_choke":
+            if success_chance > 75 and opponent.is_tired():
+                result.update({
+                    "success": True,
+                    "result": "Rear naked choke — opponent tapped!",
+                    "fatigue": 18,
+                    "score": 5,
+                    "damage": 100
+                })
+
+        elif action == "maintain_position":
+            result.update({
+                "success": True,
+                "result": "Maintained position and rested.",
+                "fatigue": -5,
+                "score": 1
+            })
+
+        elif action == "mount_strikes":
+            result.update({
+                "success": True,
+                "result": "Mounted strikes landed — damage and points scored.",
+                "fatigue": 10,
+                "score": 3,
+                "damage": 20
+            })
+
+        elif action == "hip_escape":
+            result["fatigue"] = 7
+            if success_chance + actor.stats["agility"] // 4 > 60:
+                result.update({
+                    "success": True,
+                    "result": "Hip escape successful — created space and recovered guard.",
+                    "position": "guard"
+                })
+
+        elif action == "face_crank":
+            result.update({
+                "success": True,
+                "result": "Face crank applied — opponent fatigued.",
+                "fatigue": 6,
+                "score": 1,
+                "damage": 0
+            })
+            opponent.apply_fatigue(10)
+
+        return result
 
 class BJJGame:
     def __init__(self, fighter1, fighter2):
-        self.fighter1 = fighter1
-        self.fighter2 = fighter2
+        self.f1 = fighter1
+        self.f2 = fighter2
         self.turn = 0
         self.round = 1
-        self.turns_per_round = 10
-        self.in_rest_phase = False
+        self.max_turns = 20
         self.log = []
+        self.engine = ActionEngine()
 
-    def simulate_turn(self, action_p1, action_p2):
-        if self.turn >= 20:
-            self.log.append((self.turn, "Match", "ended", self.judge_decision()))
-            return
+    def play_turn(self, action_p1, action_p2):
+        if self.f1.is_submitted():
+            return f"{self.f2.name} wins by submission."
+        if self.f2.is_submitted():
+            return f"{self.f1.name} wins by submission."
 
         self.turn += 1
-        outcome_p1 = self.evaluate_action(self.fighter1, self.fighter2, action_p1)
-        outcome_p2 = self.evaluate_action(self.fighter2, self.fighter1, action_p2)
 
-        self.resolve_outcomes(self.fighter1, self.fighter2, outcome_p1, outcome_p2)
+        prev_pos1 = self.f1.position
+        prev_pos2 = self.f2.position
 
-        if self.fighter1.position == "submitted":
-            self.log.append((self.turn, "Match", "ended", f"{self.fighter2.name} wins by submission!"))
-            return
-        elif self.fighter2.position == "submitted":
-            self.log.append((self.turn, "Match", "ended", f"{self.fighter1.name} wins by submission!"))
-            return
+        result_p1 = self.engine.evaluate(self.f1, self.f2, action_p1)
+        result_p2 = self.engine.evaluate(self.f2, self.f1, action_p2)
 
-        self.log.append((self.turn, self.fighter1.name, action_p1, outcome_p1["result"]))
-        self.log.append((self.turn, self.fighter2.name, action_p2, outcome_p2["result"]))
+        if action_p1 == action_p2:
+            if self.f1.fatigue < self.f2.fatigue:
+                self.update_fighter_state(self.f1, self.f2, result_p1)
+                self.log.append((self.turn, self.f1.name, action_p1, result_p1["result"]))
+                self.log.append((self.turn, self.f2.name, action_p2, "Move lost due to fatigue tie-break."))
+            elif self.f2.fatigue < self.f1.fatigue:
+                self.update_fighter_state(self.f2, self.f1, result_p2)
+                self.log.append((self.turn, self.f1.name, action_p1, "Move lost due to fatigue tie-break."))
+                self.log.append((self.turn, self.f2.name, action_p2, result_p2["result"]))
+            else:
+                self.f1.position = prev_pos1
+                self.f2.position = prev_pos2
+                self.log.append((self.turn, self.f1.name, action_p1, "Tied move. Fighters break and reset."))
+                self.log.append((self.turn, self.f2.name, action_p2, "Tied move. Fighters break and reset."))
+        else:
+            self.update_fighter_state(self.f1, self.f2, result_p1)
+            self.log.append((self.turn, self.f1.name, action_p1, result_p1["result"]))
 
-        print(f"Turn {self.turn}: Player - {self.fighter1.position}, AI - {self.fighter2.position}")
+            self.update_fighter_state(self.f2, self.f1, result_p2)
+            self.log.append((self.turn, self.f2.name, action_p2, result_p2["result"]))
 
-        if self.turn % self.turns_per_round == 0:
-            self.rest_phase()
-            self.round += 1
-            self.log.append((self.turn, "Rest", "Round Break", f"Entering round {self.round}"))
+        if self.f1.position in ["top", "dominant"]:
+            self.f2.position = "bottom"
+        elif self.f2.position in ["top", "dominant"]:
+            self.f1.position = "bottom"
+        elif self.f1.position == "bottom":
+            self.f2.position = "top"
+        elif self.f2.position == "bottom":
+            self.f1.position = "top"
 
-    def rest_phase(self):
-        self.fighter1.recover(15)
-        self.fighter2.recover(15)
-        self.in_rest_phase = False
+        if self.turn >= self.max_turns:
+            return self.judge_decision()
+
+    def update_fighter_state(self, actor, opponent, outcome):
+        if outcome["fatigue"] > 0:
+            actor.apply_fatigue(outcome["fatigue"])
+        elif outcome["fatigue"] < 0:
+            actor.recover_fatigue(abs(outcome["fatigue"]))
+
+        if outcome.get("score"):
+            actor.add_score(outcome["score"])
+
+        if outcome.get("damage"):
+            opponent.apply_damage(outcome["damage"])
+
+        # Apply additional fatigue to opponent if move was successful and not passive
+        if outcome.get("success") and outcome["result"] != "Tied move. Fighters break and reset.":
+            opponent.apply_fatigue(5)
+
+        actor.position = outcome.get("position", actor.position)
 
     def judge_decision(self):
-        if self.fighter1.score > self.fighter2.score:
-            return f"{self.fighter1.name} wins by decision!"
-        elif self.fighter2.score > self.fighter1.score:
-            return f"{self.fighter2.name} wins by decision!"
-        else:
-            return "Draw!"
-
-    def compute_position_bonus(self, actor, opponent, action):
-        bonus = 0
-        if action == "submit":
-            if actor.position == "dominant":
-                bonus += 10
-            elif actor.position in ["guard", "bottom"]:
-                bonus -= 10
-        elif action == "pressure_pass":
-            if actor.position == "dominant":
-                bonus += 5
-        elif action == "sweep":
-            if actor.position == "guard":
-                bonus += 5
-            if opponent.position == "dominant":
-                bonus -= 5
-        elif action == "escape":
-            if actor.position == "bottom" and opponent.position == "dominant":
-                bonus -= 10
-        return bonus
-
-    def evaluate_action(self, actor, opponent, action):
-        iq = actor.stats['grappling_iq']
-        agi = actor.stats['agility']
-        str_ = actor.stats['strength']
-        fatigue_penalty = actor.fatigue // 3
-        position_bonus = self.compute_position_bonus(actor, opponent, action)
-
-        base_success = iq + position_bonus + random.randint(-10, 10) - fatigue_penalty
-        fatigue_cost = 0
-        result = ""
-        position_change = None
-
-        # Safeguards
-        if action == "takedown" and actor.position != "neutral":
-            return {"success": False, "result": "Takedown not allowed unless standing.", "fatigue": 0, "position": actor.position}
-        if action == "sweep" and actor.position not in ["bottom", "guard"]:
-            return {"success": False, "result": "Sweep only allowed from bottom or guard.", "fatigue": 0, "position": actor.position}
-        if action == "escape" and actor.position not in ["bottom", "guard"]:
-            return {"success": False, "result": "Escape only allowed from bottom or guard.", "fatigue": 0, "position": actor.position}
-        if action == "pull_guard" and actor.position != "neutral":
-            return {"success": False, "result": "Can only pull guard while standing.", "fatigue": 0, "position": actor.position}
-        if action == "stand_up" and actor.position not in ["bottom", "guard"]:
-            return {"success": False, "result": "Stand up only possible from bottom or guard.", "fatigue": 0, "position": actor.position}
-        if action == "maintain_position" and actor.position not in ["top", "dominant"]:
-            return {"success": False, "result": "Can only maintain position if in control.", "fatigue": 0, "position": actor.position}
-
-        # Action logic
-        if action == "submit":
-            fatigue_cost = 15
-            if base_success > 65 and opponent.is_tired():
-                opponent.health -= 40
-                result = "Submission successful!"
-                position_change = "submitted"
-                return {"success": True, "result": result, "fatigue": fatigue_cost, "score": 4, "position": position_change}
-            else:
-                result = "Submission failed."
-
-        elif action == "sweep":
-            fatigue_cost = 8
-            if base_success > 55:
-                result = "Sweep successful!"
-                position_change = "top"
-                return {"success": True, "result": result, "fatigue": fatigue_cost, "score": 2, "position": position_change}
-            else:
-                result = "Sweep failed."
-
-        elif action == "takedown":
-            fatigue_cost = 10
-            if base_success > 60:
-                result = "Takedown successful!"
-                position_change = "top"
-                return {"success": True, "result": result, "fatigue": fatigue_cost, "score": 2, "position": position_change}
-            else:
-                result = "Takedown failed."
-
-        elif action == "pass_guard":
-            fatigue_cost = 8
-            if opponent.position == "guard" and base_success > 60:
-                result = "Guard passed!"
-                position_change = "top"
-                return {"success": True, "result": result, "fatigue": fatigue_cost, "score": 3, "position": position_change}
-            else:
-                result = "Pass failed."
-
-        elif action == "pressure_pass":
-            fatigue_cost = 12
-            if opponent.position == "guard" and base_success > 70 and str_ > 65:
-                result = "Powerful pressure pass!"
-                position_change = "dominant"
-                return {"success": True, "result": result, "fatigue": fatigue_cost, "score": 3, "position": position_change}
-            else:
-                result = "Failed pressure pass."
-
-        elif action == "stand_up":
-            fatigue_cost = 4
-            result = "Returned to standing."
-            position_change = "neutral"
-
-        elif action == "pull_guard":
-            fatigue_cost = 5
-            result = "Pulled guard."
-            position_change = "guard"
-
-        elif action == "escape":
-            fatigue_cost = 6
-            if base_success > 60:
-                result = "Escaped to standing!"
-                position_change = "neutral"
-            else:
-                result = "Escape failed."
-
-        elif action == "maintain_position":
-            fatigue_cost = -7
-            result = "Rested and held position."
-
-        else:
-            result = "Unknown action."
-
-        # Ensure position continuity
-        if position_change is None:
-            position_change = actor.position
-
-        return {
-            "success": False,
-            "result": result,
-            "fatigue": fatigue_cost,
-            "position": position_change
-        }
-
-    def resolve_outcomes(self, p1, p2, o1, o2):
-        if o1["fatigue"] > 0:
-            p1.apply_fatigue(o1["fatigue"])
-        elif o1["fatigue"] < 0:
-            p1.recover(abs(o1["fatigue"]))
-
-        if o2["fatigue"] > 0:
-            p2.apply_fatigue(o2["fatigue"])
-        elif o2["fatigue"] < 0:
-            p2.recover(abs(o2["fatigue"]))
-
-        if o1.get("score"):
-            p1.add_score(o1["score"])
-        if o2.get("score"):
-            p2.add_score(o2["score"])
-
-        if o1.get("position") == "submitted":
-            p2.position = "submitted"
-        elif o2.get("position") == "submitted":
-            p1.position = "submitted"
-        else:
-            p1.position = o1.get("position", p1.position)
-            p2.position = o2.get("position", p2.position)
+        if self.f1.score > self.f2.score:
+            return f"{self.f1.name} wins by decision."
+        elif self.f2.score > self.f1.score:
+            return f"{self.f2.name} wins by decision."
+        return "Draw."

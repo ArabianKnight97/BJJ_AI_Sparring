@@ -19,3 +19,6 @@ class Match(Base):
     log = Column(JSON)
     turn = Column(Integer)
     round = Column(Integer)
+    belt_level = Column(String)
+
+print("Connecting to:", DATABASE_URL)
