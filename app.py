@@ -10,7 +10,7 @@ import json
 
 app = FastAPI()
 
-client = openai.OpenAI(api_key="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")  # Replace with your actual key or use env var
+client = openai.OpenAI(api_key="<input yout key in here")  
 
 def get_db():
     db = SessionLocal()
