@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # Replace with your actual connection string
-DATABASE_URL = "postgresql://postgres:Spyro97!@localhost:5432/bjj_game"
+DATABASE_URL = "**"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
